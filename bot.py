@@ -1,4 +1,4 @@
-# Forex/Oil SMC Bot – Relaxed with Supply/Demand, Candle Patterns (15min)
+# Generic SMC Bot – BOS, S/R Bounce, Candle Patterns, Supply/Demand
 import encodings.idna
 import os, logging, requests, threading, numpy as np
 from datetime import datetime, timezone
@@ -14,20 +14,19 @@ TWELVE_DATA_KEY = os.getenv("TWELVE_DATA_KEY")
 CHAT_ID, RUN_SIGNALS = None, False
 
 # ===== CONFIG =====
-SYMBOL = "WTI/USD"          # Change to "EUR/USD" or "GBP/USD" for other bots
+SYMBOL = "WTI/USD"               # <-- change per bot
 TIMEFRAME = "15min"
 PRICE_INTERVAL_SECONDS = 900
 RISK_REWARD_MULTIPLIER = 2.0
-MIN_STOP_POINTS = 15        # adjust: 0.0005 for forex? We'll handle separately
+MIN_STOP_POINTS = 0.15            # <-- change per bot (BTC:200, Oil:0.15, Forex:0.0005)
 MAX_DAILY_LOSSES = 6
 
 ACTIVE_POSITIONS = []
 STATS = {"total_signals":0,"tp1_hits":0,"tp2_hits":0,"sl_hits":0,"daily_losses":0}
 SIGNAL_HISTORY = []
 
-# ===== CHANNEL IDs (update these!) =====
-FREE_CHANNEL_ID = --1003894988045   # your new free channel
-VIP_CHANNEL_ID = -1004416190238   # or new VIP ID
+FREE_CHANNEL_ID = -100xxxxxxxx   # <-- your forex/oil free channel ID
+VIP_CHANNEL_ID = -1004416190238
 HISTORY_CHANNEL_ID = FREE_CHANNEL_ID
 
 app = Flask(__name__)
@@ -59,12 +58,13 @@ def fetch_real_candles():
                 })
             cached_candles = candles
             last_fetch_time = now
-            logger.info(f"Fetched {len(candles)} {TIMEFRAME} {SYMBOL} candles. Price: {candles[-1]['close']}")
+            logger.info(f"Fetched {len(candles)} {SYMBOL} candles. Price: {candles[-1]['close']}")
             return candles
     except Exception as e:
         logger.error(f"API error: {e}")
     return cached_candles
 
+# ----- All detection functions (exactly as in gold) -----
 def calculate_atr(candles, period=14):
     if len(candles) < period + 1:
         return MIN_STOP_POINTS
@@ -100,24 +100,20 @@ def find_swing_levels(candles, lookback=20):
     return resistance, support
 
 def detect_fvg(candles):
-    if len(candles) < 3:
-        return None
+    if len(candles) < 3: return None
     c1, c2, c3 = candles[-3], candles[-2], candles[-1]
     if c1["high"] < c3["low"] and c3["close"] > c3["open"]:
         body = abs(c3["close"] - c3["open"])
         rng = c3["high"] - c3["low"]
-        if rng > 0 and (body / rng) > 0.25:
-            return "BUY"
+        if rng > 0 and (body / rng) > 0.25: return "BUY"
     if c1["low"] > c3["high"] and c3["close"] < c3["open"]:
         body = abs(c3["close"] - c3["open"])
         rng = c3["high"] - c3["low"]
-        if rng > 0 and (body / rng) > 0.25:
-            return "SELL"
+        if rng > 0 and (body / rng) > 0.25: return "SELL"
     return None
 
 def detect_order_blocks(candles, lookback=8):
-    if len(candles) < lookback+2:
-        return None, None
+    if len(candles) < lookback+2: return None, None
     bullish_ob, bearish_ob = None, None
     for i in range(len(candles)-lookback, len(candles)-1):
         if i+1 >= len(candles): continue
@@ -134,10 +130,8 @@ def detect_choch(candles):
     lows = [c["low"] for c in candles[-8:]]
     swing_highs, swing_lows = [], []
     for i in range(1, len(highs)-1):
-        if highs[i] > highs[i-1] and highs[i] > highs[i+1]:
-            swing_highs.append(highs[i])
-        if lows[i] < lows[i-1] and lows[i] < lows[i+1]:
-            swing_lows.append(lows[i])
+        if highs[i] > highs[i-1] and highs[i] > highs[i+1]: swing_highs.append(highs[i])
+        if lows[i] < lows[i-1] and lows[i] < lows[i+1]: swing_lows.append(lows[i])
     if len(swing_highs) < 2 or len(swing_lows) < 2: return None
     current = candles[-1]["close"]
     if len(swing_highs)>=2 and current > swing_highs[-2]: return "BULLISH"
@@ -149,26 +143,48 @@ def price_near_zone(price, zone, atr):
     return abs(price - zone) < atr
 
 def detect_candle_patterns(candles):
-    if len(candles) < 2:
-        return None, None
+    if len(candles) < 2: return None, None
     prev = candles[-2]; curr = candles[-1]
     o1, h1, l1, c1 = prev["open"], prev["high"], prev["low"], prev["close"]
     o2, h2, l2, c2 = curr["open"], curr["high"], curr["low"], curr["close"]
-    if c1 < o1 and c2 > o2 and c2 > o1 and o2 < c1:
-        return "Bullish Engulfing", "BUY"
-    if c1 > o1 and c2 < o2 and c2 < o1 and o2 > c1:
-        return "Bearish Engulfing", "SELL"
+    if c1 < o1 and c2 > o2 and c2 > o1 and o2 < c1: return "Bullish Engulfing", "BUY"
+    if c1 > o1 and c2 < o2 and c2 < o1 and o2 > c1: return "Bearish Engulfing", "SELL"
     body = abs(c2 - o2)
     lower_wick = min(o2, c2) - l2
     upper_wick = h2 - max(o2, c2)
     total_range = h2 - l2
     if total_range > 0:
-        if lower_wick > 2 * body and upper_wick < body and c2 > o2:
-            return "Hammer", "BUY"
-        if upper_wick > 2 * body and lower_wick < body and c2 < o2:
-            return "Shooting Star", "SELL"
-        if body / total_range < 0.1:
-            return "Doji", None
+        if lower_wick > 2 * body and upper_wick < body and c2 > o2: return "Hammer", "BUY"
+        if upper_wick > 2 * body and lower_wick < body and c2 < o2: return "Shooting Star", "SELL"
+        if body / total_range < 0.1: return "Doji", None
+    return None, None
+
+def detect_bos(candles):
+    if len(candles) < 10: return None
+    highs = [c["high"] for c in candles[-10:]]
+    lows = [c["low"] for c in candles[-10:]]
+    swing_highs, swing_lows = [], []
+    for i in range(1, len(highs)-1):
+        if highs[i] > highs[i-1] and highs[i] > highs[i+1]: swing_highs.append(highs[i])
+        if lows[i] < lows[i-1] and lows[i] < lows[i+1]: swing_lows.append(lows[i])
+    if len(swing_highs) < 2 or len(swing_lows) < 2: return None
+    current = candles[-1]["close"]
+    if current > swing_highs[-2]: return "BULLISH"
+    elif current < swing_lows[-2]: return "BEARISH"
+    return None
+
+def detect_sr_bounce(candles, atr):
+    if len(candles) < 3: return None, None
+    resistance, support = find_swing_levels(candles)
+    if resistance is None or support is None: return None, None
+    prev = candles[-2]; curr = candles[-1]
+    price = curr["close"]
+    if (abs(prev["low"] - support) < atr * 0.5 and
+        curr["close"] > curr["open"] and curr["close"] > prev["close"]):
+        return "SUPPORT", "BUY"
+    if (abs(prev["high"] - resistance) < atr * 0.5 and
+        curr["close"] < curr["open"] and curr["close"] < prev["close"]):
+        return "RESISTANCE", "SELL"
     return None, None
 
 def process_signals():
@@ -180,7 +196,6 @@ def process_signals():
     closes = [c["close"] for c in candles]
     current_price = closes[-1]
     atr = calculate_atr(candles)
-
     resistance, support = find_swing_levels(candles)
 
     ema_fast = calculate_ema(closes, 10)
@@ -192,6 +207,8 @@ def process_signals():
     bullish_ob, bearish_ob = detect_order_blocks(candles)
     choch = detect_choch(candles)
     pattern_name, pattern_type = detect_candle_patterns(candles)
+    bos = detect_bos(candles)
+    sr_type, sr_signal = detect_sr_bounce(candles, atr)
 
     sig, reason, grade, score_val = None, "", "C", 0
 
@@ -206,11 +223,15 @@ def process_signals():
         if support and price_near_zone(current_price, support, atr):
             score += 15; reasons.append("DemandZone")
         last = candles[-1]; rng = last["high"] - last["low"]
-        if rng > 0 and abs(last["close"] - last["open"]) / rng > 0.5:
-            score += 5; reasons.append("StrongCandle")
+        if rng > 0:
+            body_ratio = abs(last["close"] - last["open"]) / rng
+            if body_ratio > 0.5: score += 5; reasons.append("StrongCandle")
         if pattern_type == "BUY": score += 15; reasons.append(pattern_name)
         elif pattern_name == "Doji" and trend_up: score += 10; reasons.append("Doji+Trend↑")
-        if score >= 45:
+        if bos == "BULLISH": score += 20; reasons.append("BOS↑")
+        if sr_type == "SUPPORT": score += 15; reasons.append("SupportBounce")
+
+        if score >= 55:
             stop_distance = max(atr * 1.5, MIN_STOP_POINTS)
             sig = "BUY"; reason = " + ".join(reasons) + f" | ATR:{atr:.5f}"
             sl = current_price - stop_distance
@@ -230,11 +251,15 @@ def process_signals():
         if resistance and price_near_zone(current_price, resistance, atr):
             score += 15; reasons.append("SupplyZone")
         last = candles[-1]; rng = last["high"] - last["low"]
-        if rng > 0 and abs(last["close"] - last["open"]) / rng > 0.5:
-            score += 5; reasons.append("StrongCandle")
+        if rng > 0:
+            body_ratio = abs(last["close"] - last["open"]) / rng
+            if body_ratio > 0.5: score += 5; reasons.append("StrongCandle")
         if pattern_type == "SELL": score += 15; reasons.append(pattern_name)
         elif pattern_name == "Doji" and trend_down: score += 10; reasons.append("Doji+Trend↓")
-        if score >= 45:
+        if bos == "BEARISH": score += 20; reasons.append("BOS↓")
+        if sr_type == "RESISTANCE": score += 15; reasons.append("ResistanceReject")
+
+        if score >= 55:
             stop_distance = max(atr * 1.5, MIN_STOP_POINTS)
             sig = "SELL"; reason = " + ".join(reasons) + f" | ATR:{atr:.5f}"
             sl = current_price + stop_distance
@@ -249,6 +274,7 @@ def process_signals():
                 "status":"PENDING","grade":grade,"score":score_val}
     return None
 
+# ----- monitor_positions, signal_loop, commands identical to gold, just use f"{SYMBOL}" in messages -----
 async def monitor_positions(bot, price):
     global ACTIVE_POSITIONS, CHAT_ID, STATS, SIGNAL_HISTORY
     surv = []
