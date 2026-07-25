@@ -9,8 +9,8 @@ from telegram.ext import ApplicationBuilder, CommandHandler, ContextTypes
 logging.basicConfig(format="%(asctime)s - %(levelname)s - %(message)s", level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-TELEGRAM_TOKEN = os.getenv("8621818407:AAHXesgAJRNUNPNMi3ChFMS5C3FClxajeeA")
-TWELVE_DATA_KEY = os.getenv("b41c1179a13c47b0a28799a240786c9e")
+TELEGRAM_TOKEN = os.getenv("TELEGRAM BOT TOKEN")
+TWELVE_DATA_KEY = os.getenv("TWELVE DATA KEY")
 CHAT_ID, RUN_SIGNALS = None, False
 
 # ===== CONFIG =====
